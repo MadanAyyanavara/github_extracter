@@ -1,10 +1,11 @@
 import * as THREE from 'three'
-import { CodeCityEdge } from '@/types/repoAnalysis'
+import { CodeCityNode, CodeCityEdge } from '@/types/repoAnalysis'
 
 export const buildLaserLines = (
-  selectedNodeId: string | null,
+  nodes: CodeCityNode[],
   edges: CodeCityEdge[],
-  meshesById: Map<string, THREE.Mesh>
+  selectedNodeId: string | null,
+  accentColor: string
 ): THREE.Group => {
   const group = new THREE.Group()
 
@@ -12,23 +13,38 @@ export const buildLaserLines = (
     return group
   }
 
-  const outgoingEdges = edges.filter((e) => e.sourceNodeId === selectedNodeId)
-  const incomingEdges = edges.filter((e) => e.targetNodeId === selectedNodeId)
-
-  const sourceMesh = meshesById.get(selectedNodeId)
-  if (!sourceMesh) {
+  const selectedNode = nodes.find((n) => n.id === selectedNodeId)
+  if (!selectedNode) {
     return group
   }
 
-  const sourcePos = sourceMesh.position.clone()
+  // Build node lookup for fast access
+  const nodeMap = new Map<string, CodeCityNode>()
+  nodes.forEach((node) => nodeMap.set(node.id, node))
 
+  const outgoingEdges = edges.filter((e) => e.sourceNodeId === selectedNodeId)
+  const incomingEdges = edges.filter((e) => e.targetNodeId === selectedNodeId)
+
+  const sourcePos = new THREE.Vector3(
+    selectedNode.coordinates.x,
+    Math.max(0.5, Math.log10(selectedNode.linesOfCode) * 3) / 2,
+    selectedNode.coordinates.z
+  )
+
+  // Outgoing connections (cyan)
   outgoingEdges.forEach((edge) => {
-    const targetMesh = meshesById.get(edge.targetNodeId)
-    if (targetMesh) {
-      const targetPos = targetMesh.position.clone()
-      const geometry = new THREE.BufferGeometry().setFromPoints([sourcePos, targetPos])
+    const targetNode = nodeMap.get(edge.targetNodeId)
+    if (targetNode) {
+      const targetPos = new THREE.Vector3(
+        targetNode.coordinates.x,
+        Math.max(0.5, Math.log10(targetNode.linesOfCode) * 3) / 2,
+        targetNode.coordinates.z
+      )
+
+      const points = [sourcePos, targetPos]
+      const geometry = new THREE.BufferGeometry().setFromPoints(points)
       const material = new THREE.LineBasicMaterial({
-        color: 0x5eead4,
+        color: accentColor,
         linewidth: 2,
         blending: THREE.AdditiveBlending,
         transparent: true,
@@ -39,11 +55,18 @@ export const buildLaserLines = (
     }
   })
 
+  // Incoming connections (purple)
   incomingEdges.forEach((edge) => {
-    const sourceMesh2 = meshesById.get(edge.sourceNodeId)
-    if (sourceMesh2) {
-      const otherPos = sourceMesh2.position.clone()
-      const geometry = new THREE.BufferGeometry().setFromPoints([otherPos, sourcePos])
+    const sourceNode = nodeMap.get(edge.sourceNodeId)
+    if (sourceNode) {
+      const otherPos = new THREE.Vector3(
+        sourceNode.coordinates.x,
+        Math.max(0.5, Math.log10(sourceNode.linesOfCode) * 3) / 2,
+        sourceNode.coordinates.z
+      )
+
+      const points = [otherPos, sourcePos]
+      const geometry = new THREE.BufferGeometry().setFromPoints(points)
       const material = new THREE.LineBasicMaterial({
         color: 0xc084fc,
         linewidth: 2,

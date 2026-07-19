@@ -2,12 +2,10 @@ import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { useCodeCityStore } from '@/store/useCodeCityStore'
+import { CityRenderer } from '@/three/cityRenderer'
 import { createRenderer, createScene, createCamera, createControls, createLights, createGroundGrid } from '@/three/sceneSetup'
-import { buildCityMeshes } from '@/three/buildCityScene'
 import { buildLaserLines } from '@/three/laserConnections'
-import { pickNodeAtPointer } from '@/three/raycastSelection'
 import { tweenCameraTo } from '@/three/cameraTween'
-import { computeFallbackCoordinates } from '@/layout/topologicalLayout'
 import { getPalette } from '@/utils/palette'
 import styles from './CodeCityCanvas.module.css'
 
@@ -17,15 +15,16 @@ export const CodeCityCanvas = ({ theme }: { theme: 'dark' | 'light' }) => {
   const sceneRef = useRef<THREE.Scene | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const controlsRef = useRef<OrbitControls | null>(null)
-  const cityGroupRef = useRef<THREE.Group | null>(null)
+  const cityRendererRef = useRef<CityRenderer | null>(null)
   const laserGroupRef = useRef<THREE.Group | null>(null)
-  const meshesByIdRef = useRef<Map<string, THREE.Mesh>>(new Map())
   const tweenCancelRef = useRef<(() => void) | null>(null)
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
+  const rafsRef = useRef<number[]>([])
 
   const { repoAnalysis, selectedNodeId, cameraFocusRequest, colorMode, selectNode } = useCodeCityStore()
   const palette = getPalette(theme)
 
+  // Initialize Three.js scene and renderer
   useEffect(() => {
     if (!containerRef.current) return
 
@@ -43,15 +42,7 @@ export const CodeCityCanvas = ({ theme }: { theme: 'dark' | 'light' }) => {
     createLights(scene)
     createGroundGrid(scene, 50, 50)
 
-    const handlePointerDown = (event: PointerEvent) => {
-      const nodeId = pickNodeAtPointer(event, renderer.domElement, camera, meshesByIdRef.current)
-      if (nodeId) {
-        selectNode(nodeId)
-      }
-    }
-
-    renderer.domElement.addEventListener('pointerdown', handlePointerDown)
-
+    // Setup resize observer
     const resizeObserver = new ResizeObserver(() => {
       const width = container.clientWidth
       const height = container.clientHeight
@@ -62,76 +53,33 @@ export const CodeCityCanvas = ({ theme }: { theme: 'dark' | 'light' }) => {
     resizeObserver.observe(container)
     resizeObserverRef.current = resizeObserver
 
-    const rafs: number[] = []
+    // Animation loop
     const animate = () => {
       const raf = requestAnimationFrame(animate)
-      rafs.push(raf)
+      rafsRef.current.push(raf)
       controls.update()
       renderer.render(scene, camera)
     }
     animate()
 
     return () => {
-      renderer.domElement.removeEventListener('pointerdown', handlePointerDown)
       resizeObserver.disconnect()
-      rafs.forEach((raf) => cancelAnimationFrame(raf))
+      rafsRef.current.forEach((raf) => cancelAnimationFrame(raf))
+      rafsRef.current = []
       renderer.dispose()
-      container.removeChild(renderer.domElement)
+      if (container.parentNode?.contains(renderer.domElement)) {
+        container.removeChild(renderer.domElement)
+      }
     }
-  }, [selectNode])
+  }, [palette])
 
+  // Render city using InstancedMesh
   useEffect(() => {
-    if (!sceneRef.current || !repoAnalysis) return
+    if (!sceneRef.current || !cameraRef.current || !repoAnalysis) return
 
-    const oldCityGroup = cityGroupRef.current
-    if (oldCityGroup) {
-      oldCityGroup.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          child.geometry.dispose()
-          ;(child.material as THREE.Material).dispose()
-        }
-      })
-      sceneRef.current.remove(oldCityGroup)
-    }
-
-    const layoutCoords = new Map(
-      repoAnalysis.nodes.map((n) => [
-        n.id,
-        n.coordinates || { x: 0, z: 0 },
-      ])
-    )
-
-    if (
-      repoAnalysis.nodes.some(
-        (n) => !n.coordinates || (n.coordinates.x === 0 && n.coordinates.z === 0)
-      )
-    ) {
-      const fallbackCoords = computeFallbackCoordinates(
-        repoAnalysis.nodes,
-        repoAnalysis.edges,
-        repoAnalysis.visualCanvasConfig.gridSizeX,
-        repoAnalysis.visualCanvasConfig.gridSizeZ
-      )
-      fallbackCoords.forEach((coords, id) => {
-        if (!repoAnalysis.nodes.find((n) => n.id === id)?.coordinates) {
-          layoutCoords.set(id, coords)
-        }
-      })
-    }
-
-    const { group, meshesById } = buildCityMeshes(repoAnalysis.nodes, layoutCoords, colorMode)
-    cityGroupRef.current = group
-    meshesByIdRef.current = meshesById
-    sceneRef.current.add(group)
-
-    if (!repoAnalysis.nodes.some((n) => n.id === selectedNodeId)) {
-      selectNode(null)
-    }
-  }, [repoAnalysis, colorMode, selectNode, selectedNodeId])
-
-  useEffect(() => {
+    // Clean up old laser group
     const oldLaserGroup = laserGroupRef.current
-    if (oldLaserGroup && sceneRef.current) {
+    if (oldLaserGroup) {
       sceneRef.current.remove(oldLaserGroup)
       oldLaserGroup.traverse((child) => {
         if (child instanceof THREE.Line) {
@@ -141,38 +89,63 @@ export const CodeCityCanvas = ({ theme }: { theme: 'dark' | 'light' }) => {
       })
     }
 
-    if (selectedNodeId && repoAnalysis) {
-      const newLaserGroup = buildLaserLines(selectedNodeId, repoAnalysis.edges, meshesByIdRef.current)
-      laserGroupRef.current = newLaserGroup
-      sceneRef.current?.add(newLaserGroup)
+    // Render city with InstancedMesh
+    if (!cityRendererRef.current) {
+      cityRendererRef.current = new CityRenderer(
+        containerRef.current!,
+        {
+          nodes: repoAnalysis.nodes,
+          colorMode,
+          selectedNodeId,
+          onNodeSelect: selectNode,
+        },
+        sceneRef.current,
+        cameraRef.current,
+        rendererRef.current!
+      )
+    } else {
+      cityRendererRef.current.updateConfig({
+        nodes: repoAnalysis.nodes,
+        colorMode,
+        selectedNodeId,
+        onNodeSelect: selectNode,
+      })
     }
-  }, [selectedNodeId, repoAnalysis, cameraFocusRequest])
 
+    cityRendererRef.current.renderCity()
+
+    // Build laser connections for dependencies
+    const newLaserGroup = buildLaserLines(
+      repoAnalysis.nodes,
+      repoAnalysis.edges,
+      selectedNodeId,
+      palette.accent.primary
+    )
+    laserGroupRef.current = newLaserGroup
+    sceneRef.current.add(newLaserGroup)
+  }, [repoAnalysis, colorMode, selectedNodeId, selectNode, palette])
+
+  // Handle camera focus on node selection
   useEffect(() => {
-    if (!cameraFocusRequest || !cameraRef.current || !controlsRef.current) return
+    if (!cameraFocusRequest || !cameraRef.current || !sceneRef.current) return
 
-    const targetMesh = meshesByIdRef.current.get(cameraFocusRequest.nodeId)
-    if (!targetMesh) return
-
-    const offset = targetMesh.position.length() + 15
-    const direction = targetMesh.position.normalize()
-    const targetPos = direction.multiplyScalar(offset)
+    const targetNode = repoAnalysis?.nodes.find((n) => n.id === cameraFocusRequest.nodeId)
+    if (!targetNode) return
 
     if (tweenCancelRef.current) {
       tweenCancelRef.current()
     }
 
-    tweenCancelRef.current = tweenCameraTo(cameraRef.current, controlsRef.current, targetPos, 800)
-  }, [cameraFocusRequest?.nonce, cameraFocusRequest])
+    const targetPos = new THREE.Vector3(
+      targetNode.coordinates.x,
+      Math.max(0.5, Math.log10(targetNode.linesOfCode) * 3) + 8,
+      targetNode.coordinates.z + 8
+    )
 
-  useEffect(() => {
-    if (sceneRef.current) {
-      const bgColor = palette.bg.base
-      sceneRef.current.background = new THREE.Color(bgColor)
-      sceneRef.current.fog = new THREE.Fog(bgColor, 100, 200)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [palette])
+    tweenCancelRef.current = tweenCameraTo(cameraRef.current, targetPos, 800)
+  }, [cameraFocusRequest, repoAnalysis])
 
-  return <div ref={containerRef} className={styles.canvas} />
+  return (
+    <div className={styles.container} ref={containerRef} />
+  )
 }
