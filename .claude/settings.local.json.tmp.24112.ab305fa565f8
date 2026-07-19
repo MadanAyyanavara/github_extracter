@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Force)",
+      "Bash(git log *)",
+      "WebSearch",
+      "Skill(run)",
+      "Bash(npm run *)",
+      "Bash(mvn *)",
+      "PowerShell(java *)",
+      "Bash(git commit -m ' *)",
+      "PowerShell(choco search *)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'Add comprehensive setup guide for frontend and backend *)",
+      "Bash(git commit -m 'Implement global WebFlux CORS configuration *)",
+      "Bash(git commit -m 'Implement React fetch service with backend discovery and graceful fallback *)",
+      "Bash(git commit -m 'Add comprehensive integration documentation *)",
+      "Bash(git commit -m 'Implement production-grade Ingestion Engine and Three.js WebGL layer *)",
+      "Bash(git commit -m 'Add comprehensive production documentation and deployment configurations *)",
+      "Bash(git commit -m 'Add production deployment guide and update README with navigation *)"
+    ]
+  }
+}
