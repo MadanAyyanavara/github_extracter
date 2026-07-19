@@ -3,6 +3,7 @@ import { useCodeCityStore } from '@/store/useCodeCityStore'
 import { CodeCityCanvas } from '@/components/CodeCityCanvas/CodeCityCanvas'
 import { AiDrawer } from '@/components/AiDrawer/AiDrawer'
 import { TimeTravelSlider } from '@/components/TimeTravelSlider/TimeTravelSlider'
+import { BackendStatus } from '@/components/BackendStatus/BackendStatus'
 import styles from './App.module.css'
 
 function App() {
@@ -49,6 +50,8 @@ function App() {
         </div>
         <AiDrawer />
       </div>
+
+      <BackendStatus />
     </div>
   )
 }
