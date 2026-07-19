@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: code-city-backend
+  webflux:
+    cors:
+      allowed-origins: "http://localhost:5173"
+      allowed-methods: "GET,POST,OPTIONS"
+      allowed-headers: "*"
+
+server:
+  port: 8080
+
+logging:
+  level:
+    root: INFO
+    com.github: DEBUG
+
+langchain4j:
+  api-key: ${ANTHROPIC_API_KEY:}
