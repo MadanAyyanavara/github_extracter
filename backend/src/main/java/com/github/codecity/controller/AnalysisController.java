@@ -7,11 +7,10 @@ import org.springframework.http.ResponseEntity;
 import com.github.codecity.service.RepoAnalysisService;
 import com.github.codecity.service.TimelineService;
 import com.github.codecity.model.CodeCityAnalysis;
-import java.util.*;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api")
-@CrossOrigin(origins = "http://localhost:5173")
 public class AnalysisController {
 
   @Autowired private RepoAnalysisService repoAnalysisService;
