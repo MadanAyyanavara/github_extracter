@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+backend/target/
+
+# Production
+dist/
+build/
+
+# Generated files
+*.generated.ts
+*.generated.js
+
+# Configs
+package-lock.json
+pom.xml
+
+# Temp files
+*.tmp.*
+.DS_Store
+*.swp
+
+# Documentation
+**/*.md
