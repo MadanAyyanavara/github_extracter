@@ -1,0 +1,57 @@
+# Multi-stage build for production-grade backend
+FROM maven:3.9-eclipse-temurin-21 AS builder
+
+WORKDIR /build
+
+# Copy pom.xml first for layer caching
+COPY backend/pom.xml .
+
+# Download dependencies (cached if pom.xml unchanged)
+RUN mvn dependency:go-offline -B
+
+# Copy source code
+COPY backend/src ./src
+
+# Build JAR
+RUN mvn clean package -DskipTests -q
+
+# Runtime stage - minimal image
+FROM eclipse-temurin:21-jre-alpine
+
+LABEL maintainer="GitHub Code City Team"
+LABEL version="1.0.0"
+LABEL description="Code City Backend - Repository Analysis Engine"
+
+WORKDIR /app
+
+# Install git (required for JGit)
+RUN apk add --no-cache git
+
+# Copy built JAR from builder stage
+COPY --from=builder /build/target/code-city-backend-*.jar app.jar
+
+# Create non-root user
+RUN addgroup -g 1000 appuser && \
+    adduser -D -u 1000 -G appuser appuser && \
+    chown -R appuser:appuser /app
+
+USER appuser
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+    CMD wget -q -O- http://localhost:8080/api/health || exit 1
+
+# JVM configuration for containerized environment
+ENV JAVA_OPTS="-Xmx1g -Xms512m \
+    -XX:+UseG1GC \
+    -XX:MaxGCPauseMillis=200 \
+    -XX:+UseStringDeduplication \
+    -XX:+UnlockDiagnosticVMOptions \
+    -XX:G1SummarizeRSetStatsPeriod=1 \
+    -Dcom.sun.management.jmxremote.port=9010 \
+    -Dcom.sun.management.jmxremote.authenticate=false \
+    -Dcom.sun.management.jmxremote.ssl=false"
+
+EXPOSE 8080 9010
+
+ENTRYPOINT ["java", "-jar", "app.jar"]

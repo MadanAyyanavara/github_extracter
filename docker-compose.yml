@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  # Frontend: React 19 + Vite + Three.js @ localhost:3000
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: code-city-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      VITE_API_BASE_URL: "http://localhost:8080/api"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - code-city-network
+    restart: unless-stopped
+
+  # Backend: Java 21 Spring Boot @ localhost:8080
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: code-city-backend
+    ports:
+      - "8080:8080"
+      - "9010:9010"  # JMX monitoring
+    environment:
+      JAVA_OPTS: >
+        -Xmx2g -Xms1g
+        -XX:+UseG1GC
+        -XX:MaxGCPauseMillis=200
+        -XX:+UseStringDeduplication
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      SPRING_PROFILES_ACTIVE: "production"
+    volumes:
+      # Optional: persist temp analysis data
+      - code-city-temp:/tmp/code-city-analysis
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+    networks:
+      - code-city-network
+    restart: unless-stopped
+
+  # Optional: Redis cache for analysis results
+  redis:
+    image: redis:7-alpine
+    container_name: code-city-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - code-city-network
+    restart: unless-stopped
+    profiles:
+      - with-cache
+
+  # Optional: PostgreSQL for analysis history
+  postgres:
+    image: postgres:16-alpine
+    container_name: code-city-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: codecity
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-codecity}"
+      POSTGRES_DB: codecity
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codecity"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - code-city-network
+    restart: unless-stopped
+    profiles:
+      - with-database
+
+volumes:
+  code-city-temp:
+    driver: local
+  redis-data:
+    driver: local
+  postgres-data:
+    driver: local
+
+networks:
+  code-city-network:
+    driver: bridge

@@ -1,0 +1,294 @@
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: code-city
+
+---
+# ConfigMap for backend configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: code-city-config
+  namespace: code-city
+data:
+  application.yml: |
+    spring:
+      application:
+        name: code-city-backend
+      jpa:
+        hibernate:
+          ddl-auto: validate
+    server:
+      port: 8080
+      compression:
+        enabled: true
+        min-response-size: 1024
+
+---
+# Secret for API keys
+apiVersion: v1
+kind: Secret
+metadata:
+  name: code-city-secrets
+  namespace: code-city
+type: Opaque
+data:
+  anthropic-api-key: <base64-encoded-key>
+
+---
+# Backend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: code-city-backend-svc
+  namespace: code-city
+spec:
+  selector:
+    app: code-city-backend
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+    - port: 9010
+      targetPort: 9010
+      name: jmx
+  type: ClusterIP
+
+---
+# Backend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-city-backend
+  namespace: code-city
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: code-city-backend
+  template:
+    metadata:
+      labels:
+        app: code-city-backend
+        version: v1
+    spec:
+      containers:
+      - name: backend
+        image: code-city-backend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9010
+          name: jmx
+        env:
+        - name: JAVA_OPTS
+          value: "-Xmx1g -Xms512m -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: code-city-secrets
+              key: anthropic-api-key
+        resources:
+          requests:
+            memory: "768Mi"
+            cpu: "500m"
+          limits:
+            memory: "1.5Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 8080
+          initialDelaySeconds: 40
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 8080
+          initialDelaySeconds: 20
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+        - name: temp
+          mountPath: /tmp/code-city-analysis
+      volumes:
+      - name: config
+        configMap:
+          name: code-city-config
+      - name: temp
+        emptyDir:
+          sizeLimit: 10Gi
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - code-city-backend
+              topologyKey: kubernetes.io/hostname
+
+---
+# Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: code-city-frontend-svc
+  namespace: code-city
+spec:
+  selector:
+    app: code-city-frontend
+  ports:
+    - port: 3000
+      targetPort: 3000
+      name: http
+  type: LoadBalancer
+
+---
+# Frontend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-city-frontend
+  namespace: code-city
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: code-city-frontend
+  template:
+    metadata:
+      labels:
+        app: code-city-frontend
+        version: v1
+    spec:
+      containers:
+      - name: frontend
+        image: code-city-frontend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3000
+          name: http
+        env:
+        - name: VITE_API_BASE_URL
+          value: "http://code-city-backend-svc:8080/api"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 2
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+
+---
+# HorizontalPodAutoscaler for Backend
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: code-city-backend-hpa
+  namespace: code-city
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: code-city-backend
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 15
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+
+---
+# Ingress for external access
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: code-city-ingress
+  namespace: code-city
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - code-city.example.com
+    secretName: code-city-tls
+  rules:
+  - host: code-city.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: code-city-frontend-svc
+            port:
+              number: 3000
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: code-city-backend-svc
+            port:
+              number: 8080
